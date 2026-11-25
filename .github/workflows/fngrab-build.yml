@@ -11,41 +11,140 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: build
+
+      - name: 准备源码
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          curl -fsSL -o src.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/.github/workflows/fengniao-grab-src.zip
+          unzip -q src.zip -d s
+          cd s/fengniao-grab
+          sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
+          echo OK
+
+      - name: 写入卡密旁路
+        run: |
+          cat > s/fengniao-grab/app/src/main/java/com/rev/fngrab/KamiHook.java <<'JAVAEOF'
+          package com.rev.fngrab;
+
+          import java.lang.reflect.Method;
+          import java.util.HashSet;
+          import java.util.Set;
+
+          import de.robv.android.xposed.XC_MethodHook;
+          import de.robv.android.xposed.XposedBridge;
+          import de.robv.android.xposed.XposedHelpers;
+
+          public class KamiHook {
+              private static final String TAG = "FNKAMI";
+              private static final Set<String> DONE = new HashSet<>();
+
+              public static void install(ClassLoader cl) {
+                  try {
+                      XposedHelpers.findAndHookMethod(ClassLoader.class, "loadClass", String.class,
+                          new XC_MethodHook() {
+                              @Override protected void afterHookedMethod(MethodHookParam p) {
+                                  Object r = p.getResult();
+                                  if (r instanceof Class) hook((Class<?>) r);
+                              }
+                          });
+                      XposedBridge.log(TAG + ": loadClass ready");
+                  } catch (Throwable e) { XposedBridge.log(TAG + ": hook fail " + e); }
+
+                  try {
+                      XposedHelpers.findAndHookMethod("java.security.Signature", cl, "verify", byte[].class,
+                          new XC_MethodHook() {
+                              @Override protected void beforeHookedMethod(MethodHookParam p) {
+                                  XposedBridge.log(TAG + ": Signature.verify -> true");
+                                  p.setResult(Boolean.TRUE);
+                              }
+                          });
+                  } catch (Throwable ignored) { }
+              }
+
+              private static void hook(final Class<?> c) {
+                  String n = c.getName();
+                  if (!n.startsWith("com.aaa.") && !n.startsWith("com.solease.")) return;
+                  if (DONE.contains(n)) return;
+                  DONE.add(n);
+                  XposedBridge.log(TAG + ": class " + n);
+                  for (Method m : c.getDeclaredMethods()) {
+                      try {
+                          final String sig = n + "#" + m.getName();
+                          final boolean isBool = m.getReturnType() == boolean.class;
+                          XposedBridge.hookMethod(m, new XC_MethodHook() {
+                              @Override protected void beforeHookedMethod(MethodHookParam p) {
+                                  if (isBool) { XposedBridge.log(TAG + ": true <- " + sig); p.setResult(Boolean.TRUE); }
+                              }
+                              @Override protected void afterHookedMethod(MethodHookParam p) {
+                                  if (!isBool) XposedBridge.log(TAG + ": " + sig + " -> " + p.getResult());
+                              }
+                          });
+                      } catch (Throwable ignored) { }
+                  }
+              }
+          }
+          JAVAEOF
+          echo written
+
+      - name: 打补丁
+        run: |
+          cd s/fengniao-grab
+          python3 - <<'PYEOF'
+          p = "app/src/main/java/com/rev/fngrab/MainHook.java"
+          s = open(p, encoding="utf-8").read()
+          old = "        if (!TARGET.equals(lp.packageName)) return;"
+          add = ('        if ("com.dada.mobile.android".equals(lp.packageName)) {\n'
+                 '            XposedBridge.log(TAG + ": dada -> kami bypass");\n'
+                 '            KamiHook.install(lp.classLoader);\n'
+                 '            return;\n'
+                 '        }\n')
+          if "com.dada.mobile.android" in s:
+              print("already patched")
+          else:
+              assert old in s, "marker not found"
+              s = s.replace(old, add + old, 1)
+              open(p, "w", encoding="utf-8").write(s)
+              print("MainHook patched")
+          PYEOF
+
+      - name: 构建签名
         run: |
           {
             set -x
             export ANDROID_HOME=/usr/local/lib/android/sdk
             export ANDROID_SDK_ROOT=$ANDROID_HOME
             export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-            sdkmanager "platforms;android-34" "build-tools;34.0.0"
-            curl -fsSL -o src.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/.github/workflows/fengniao-grab-src.zip
-            unzip -q src.zip -d s
             cd s/fengniao-grab
-            sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
             gradle assembleRelease --no-daemon
             BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
             APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
             $BT/zipalign -f 4 "$APK" m.apk
             keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
-            $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out /tmp/FNGrab-module.apk m.apk
-            ls -l /tmp/FNGrab-module.apk
+            $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out /tmp/FNGrab-kami.apk m.apk
+            unzip -p /tmp/FNGrab-kami.apk classes.dex | strings | grep -c KamiHook
           } > /tmp/out.txt 2>&1
           tail -20 /tmp/out.txt
-      - name: 发布模块
+
+      - name: 发布
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: fngrab-module-v1
-          files: /tmp/FNGrab-module.apk
+          tag_name: fngrab-kami-v1
+          files: /tmp/FNGrab-kami.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 日志回写
         if: always()
         run: |
