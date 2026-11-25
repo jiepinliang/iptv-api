@@ -1,0 +1,56 @@
+name: Build FNGrab
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'fngrab-build.yml'
+      - '.github/workflows/fngrab-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 下载工程
+        run: |
+          curl -sL -o p.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/fengniao-grab-src.zip
+          unzip -q p.zip -d s
+          ls s/fengniao-grab
+
+      - name: 构建
+        run: |
+          cd s/fengniao-grab
+          gradle assembleRelease --no-daemon
+
+      - name: 签名
+        run: |
+          cd s/fengniao-grab
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          echo "unsigned=$APK"
+          $BT/zipalign -f 4 "$APK" a.apk
+          keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
+          $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out FNGrab.apk a.apk
+          ls -l FNGrab.apk
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fngrab-v1
+          name: FNGrab APK
+          files: s/fengniao-grab/FNGrab.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FNGrab-apk
+          path: s/fengniao-grab/FNGrab.apk
