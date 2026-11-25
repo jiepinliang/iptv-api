@@ -22,37 +22,33 @@ jobs:
           gradle-version: '8.7'
 
       - name: build
-        continue-on-error: true
         run: |
           {
             set -x
-            export ANDROID_HOME=$HOME/android-sdk
-            export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-            mkdir -p $ANDROID_HOME/cmdline-tools
-            curl -fsSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q /tmp/cmdtools.zip -d $ANDROID_HOME/cmdline-tools
-            mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-            yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-            $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
+            export ANDROID_HOME=/usr/local/lib/android/sdk
+            export ANDROID_SDK_ROOT=$ANDROID_HOME
+            export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+            sdkmanager --version
+            yes | sdkmanager --licenses > /dev/null 2>&1 || true
+            sdkmanager "platforms;android-34" "build-tools;34.0.0"
             curl -fsSL -o p.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/.github/workflows/fengniao-grab-src.zip
             unzip -q p.zip -d s
             cd s/fengniao-grab
             sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
-            cat build.gradle
             gradle assembleRelease --no-daemon --stacktrace
             BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
             APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
             $BT/zipalign -f 4 "$APK" a.apk
             keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
             $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out /tmp/FNGrab.apk a.apk
+            cp /tmp/FNGrab.apk /tmp/ok.flag
           } > /tmp/out.txt 2>&1
-          tail -30 /tmp/out.txt
+          tail -25 /tmp/out.txt
 
       - name: 发布 Release
-        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: fngrab-v1
+          tag_name: fngrab-v2
           files: /tmp/FNGrab.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
