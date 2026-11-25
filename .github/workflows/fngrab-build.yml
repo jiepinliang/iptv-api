@@ -21,7 +21,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: 准备源码
+      - name: prepare
         run: |
           export ANDROID_HOME=/usr/local/lib/android/sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
@@ -31,9 +31,9 @@ jobs:
           unzip -q src.zip -d s
           cd s/fengniao-grab
           sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
-          echo OK
+          echo prepared
 
-      - name: 写入卡密旁路
+      - name: write KamiHook
         run: |
           cat > s/fengniao-grab/app/src/main/java/com/rev/fngrab/KamiHook.java <<'JAVAEOF'
           package com.rev.fngrab;
@@ -61,6 +61,15 @@ jobs:
                           });
                       XposedBridge.log(TAG + ": loadClass ready");
                   } catch (Throwable e) { XposedBridge.log(TAG + ": hook fail " + e); }
+
+                  String[] pre = {"com.aaa.zhk.ZhkHide", "com.aaa.zhk.Hid",
+                      "com.aaa.patch.ExpiryDisplayFix",
+                      "com.solease.Seal", "com.solease.SealLoader", "com.solease.SealBox",
+                      "com.solease.SealDebugGuard", "com.solease.SealDebugPolicy"};
+                  for (String n : pre) {
+                      try { hook(XposedHelpers.findClass(n, cl)); }
+                      catch (Throwable t) { XposedBridge.log(TAG + ": miss " + n); }
+                  }
 
                   try {
                       XposedHelpers.findAndHookMethod("java.security.Signature", cl, "verify", byte[].class,
@@ -98,7 +107,7 @@ jobs:
           JAVAEOF
           echo written
 
-      - name: 打补丁
+      - name: patch MainHook
         run: |
           cd s/fengniao-grab
           python3 - <<'PYEOF'
@@ -111,15 +120,14 @@ jobs:
                  '            return;\n'
                  '        }\n')
           if "com.dada.mobile.android" in s:
-              print("already patched")
+              print("already")
           else:
               assert old in s, "marker not found"
-              s = s.replace(old, add + old, 1)
-              open(p, "w", encoding="utf-8").write(s)
-              print("MainHook patched")
+              open(p, "w", encoding="utf-8").write(s.replace(old, add + old, 1))
+              print("patched")
           PYEOF
 
-      - name: 构建签名
+      - name: build and sign
         run: |
           {
             set -x
@@ -137,20 +145,16 @@ jobs:
           } > /tmp/out.txt 2>&1
           tail -20 /tmp/out.txt
 
-      - name: 发布
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: fngrab-kami-v1
+          tag_name: fngrab-kami-v2
           files: /tmp/FNGrab-kami.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 日志回写
+      - name: write log
         if: always()
         run: |
           tail -c 9000 /tmp/out.txt > buildlog.txt || echo "no log" > buildlog.txt
           git config user.email ci@ci.local
-          git config user.name ci
-          git add buildlog.txt
-          git commit -m "ci log [skip ci]" || true
-          git push origin HEAD:master || true
+          git config
