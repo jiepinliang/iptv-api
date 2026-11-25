@@ -1,4 +1,4 @@
-name: Build ZS Unlocked
+name: Build FNGrab
 on:
   workflow_dispatch:
   push:
@@ -18,7 +18,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: merge
+      - name: build
         run: |
           {
             set -x
@@ -31,21 +31,19 @@ jobs:
             cd s/fengniao-grab
             sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
             gradle assembleRelease --no-daemon
-            cd ../..
-            curl -fsSL -o zs.apk https://raw.githubusercontent.com/jiepinliang/iptv-api/master/zs-orig.apk
-            python3 merge.py
             BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-            $BT/zipalign -f 4 zs-unlocked.apk zs-aligned.apk
+            APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+            $BT/zipalign -f 4 "$APK" m.apk
             keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
-            $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out /tmp/ZS-Unlocked.apk zs-aligned.apk
-            ls -l /tmp/ZS-Unlocked.apk
+            $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out /tmp/FNGrab-module.apk m.apk
+            ls -l /tmp/FNGrab-module.apk
           } > /tmp/out.txt 2>&1
-          tail -30 /tmp/out.txt
-      - name: 发布
+          tail -20 /tmp/out.txt
+      - name: 发布模块
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: zs-unlocked-v1
-          files: /tmp/ZS-Unlocked.apk
+          tag_name: fngrab-module-v1
+          files: /tmp/FNGrab-module.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: 日志回写
