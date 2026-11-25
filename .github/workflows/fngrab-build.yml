@@ -1,8 +1,11 @@
 name: Build FNGrab
-on: [workflow_dispatch, push]
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - buildlog.txt
 permissions:
   contents: write
-  issues: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,22 +14,32 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
       - name: build
         run: |
           set -o pipefail
+          export ANDROID_HOME=$HOME/android-sdk
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          echo "== 装 SDK =="
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          curl -sL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdtools.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          echo "== 下载工程 =="
           curl -sL -o p.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/.github/workflows/fengniao-grab-src.zip
           unzip -q p.zip -d s
           cd s/fengniao-grab
           sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
-          cat build.gradle
+          echo "== 编译 =="
           gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/out.txt
       - name: sign
         run: |
           cd s/fengniao-grab
-          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          BT=$(ls -d $HOME/android-sdk/build-tools/* | sort -V | tail -1)
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
           $BT/zipalign -f 4 "$APK" a.apk
           keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
@@ -41,10 +54,12 @@ jobs:
           files: /tmp/FNGrab.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: 失败时报告日志
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 日志回写仓库
+        if: always()
         run: |
-          tail -c 6000 /tmp/out.txt > /tmp/tail.txt || echo "no log" > /tmp/tail.txt
-          gh issue create -R $GITHUB_REPOSITORY -t "FNGrab build failed" -F /tmp/tail.txt || true
+          tail -c 8000 /tmp/out.txt > buildlog.txt 2>/dev/null || echo "no log" > buildlog.txt
+          git config user.email ci@ci.local
+          git config user.name ci
+          git add buildlog.txt
+          git commit -m "ci log [skip ci]" || true
+          git push || true
