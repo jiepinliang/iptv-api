@@ -1,10 +1,11 @@
 name: Build FNGrab
 on: [workflow_dispatch, push]
+permissions:
+  contents: write
+  issues: write
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/setup-java@v4
         with:
@@ -13,12 +14,18 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: build
         run: |
+          set -o pipefail
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0" >/dev/null
           curl -sL -o p.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/.github/workflows/fengniao-grab-src.zip
           unzip -q p.zip -d s
           cd s/fengniao-grab
-          gradle assembleRelease --no-daemon
+          sed -i "s#allprojects { repositories { google(); mavenCentral() } }#allprojects { repositories { google(); mavenCentral(); maven { url 'https://api.xposed.info/' } } }#" build.gradle
+          cat build.gradle
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/out.txt
+      - name: sign
+        run: |
+          cd s/fengniao-grab
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
           $BT/zipalign -f 4 "$APK" a.apk
@@ -34,3 +41,10 @@ jobs:
           files: /tmp/FNGrab.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 失败时报告日志
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -c 6000 /tmp/out.txt > /tmp/tail.txt || echo "no log" > /tmp/tail.txt
+          gh issue create -R $GITHUB_REPOSITORY -t "FNGrab build failed" -F /tmp/tail.txt || true
