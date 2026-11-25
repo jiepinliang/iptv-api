@@ -1,0 +1,64 @@
+name: Build FNGrab
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'fngrab-build.yml'
+      - '.github/workflows/fngrab-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装 SDK 组件并接受许可
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          sdkmanager --list_installed | head -20
+
+      - name: 下载工程
+        run: |
+          curl -sL -o p.zip https://raw.githubusercontent.com/jiepinliang/iptv-api/master/fengniao-grab-src.zip
+          unzip -q p.zip -d s
+          echo "--- 工程文件 ---"
+          find s -name "*.java" -o -name "*.gradle" -o -name "AndroidManifest.xml" | sort
+
+      - name: 构建
+        run: |
+          cd s/fengniao-grab
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: 签名
+        run: |
+          cd s/fengniao-grab
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          echo "build-tools=$BT"
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          echo "unsigned=$APK"
+          $BT/zipalign -f 4 "$APK" a.apk
+          keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=dev" -noprompt
+          $BT/apksigner sign --ks ks.jks --ks-pass pass:123456 --key-pass pass:123456 --out FNGrab.apk a.apk
+          ls -l FNGrab.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FNGrab-apk
+          path: s/fengniao-grab/FNGrab.apk
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fngrab-v${{ github.run_number }}
+          name: FNGrab APK ${{ github.run_number }}
+          files: s/fengniao-grab/FNGrab.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
