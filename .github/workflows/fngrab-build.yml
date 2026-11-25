@@ -62,12 +62,13 @@ jobs:
                       XposedBridge.log(TAG + ": loadClass ready");
                   } catch (Throwable e) { XposedBridge.log(TAG + ": hook fail " + e); }
 
-                  String[] pre = {"com.aaa.zhk.ZhkHide", "com.aaa.zhk.Hid",
+                  ClassLoader ml = KamiHook.class.getClassLoader();
+          String[] pre = {"com.aaa.zhk.ZhkHide", "com.aaa.zhk.Hid",
                       "com.aaa.patch.ExpiryDisplayFix",
                       "com.solease.Seal", "com.solease.SealLoader", "com.solease.SealBox",
                       "com.solease.SealDebugGuard", "com.solease.SealDebugPolicy"};
                   for (String n : pre) {
-                      try { hook(XposedHelpers.findClass(n, cl)); }
+                      try { hook(XposedHelpers.findClass(n, ml)); }
                       catch (Throwable t) { XposedBridge.log(TAG + ": miss " + n); }
                   }
 
@@ -157,4 +158,7 @@ jobs:
         run: |
           tail -c 9000 /tmp/out.txt > buildlog.txt || echo "no log" > buildlog.txt
           git config user.email ci@ci.local
-          git config
+          git config user.name ci
+          git add buildlog.txt
+          git commit -m "ci log [skip ci]" || true
+          git push origin HEAD:master || true
